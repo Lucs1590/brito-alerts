@@ -96,7 +96,7 @@ def main() -> int:
 
             if alert_recently_sent(alert):
                 print(
-                    f"[skip] Alert recently sent for {snapshot.name} at similar price. Skipping to avoid spamming."
+                    f"[skip] Alert already sent for {snapshot.name} at this price. Skipping to avoid spamming."
                 )
                 continue
 
@@ -418,10 +418,12 @@ def build_alert(snapshot: PriceSnapshot, history: list[float]) -> Alert | None:
 
 
 def alert_recently_sent(alert: Alert) -> bool:
+    """Check if alert already sent. Allows up to 2 distinct price drops per site."""
     if not ALERTS_PATH.exists():
         return False
 
     cutoff = now_utc() - timedelta(days=ALERT_COOLDOWN_DAYS)
+    recent_alerts: list[tuple[datetime, float]] = []
 
     with ALERTS_PATH.open("r", newline="", encoding="utf-8") as file:
         reader = csv.DictReader(file)
@@ -439,14 +441,14 @@ def alert_recently_sent(alert: Alert) -> bool:
             same_url = row.get("url") == alert.snapshot.url
             same_currency = row.get("currency") == alert.snapshot.currency
 
-            same_price = math.isclose(
-                price,
-                alert.snapshot.price,
-                rel_tol=0.01
-            )
+            if same_url and same_currency:
+                recent_alerts.append((timestamp, price))
 
-            if same_url and same_currency and same_price:
-                return True
+    recent_alerts.sort(key=lambda x: x[1])
+
+    for _, price in recent_alerts[:2]:
+        if math.isclose(price, alert.snapshot.price, rel_tol=0.01):
+            return True
 
     return False
 
