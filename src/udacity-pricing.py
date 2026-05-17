@@ -3,7 +3,6 @@ import math
 import os
 import re
 import smtplib
-import json
 import requests
 import sys
 from dataclasses import dataclass
