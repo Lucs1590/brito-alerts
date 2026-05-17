@@ -3,6 +3,8 @@ import math
 import os
 import re
 import smtplib
+import json
+import requests
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -453,8 +455,11 @@ def send_email(alerts: list[Alert]) -> bool:
     if not alerts:
         return False
 
+    if create_github_issue(alerts):
+        return True
+
     if not email_configured():
-        print("[email] Alert generated, but email not configured. Nothing sent.")
+        print("[notification] Alert generated, but no notification mechanism configured. Nothing sent.")
         return False
 
     smtp_host = os.environ["SMTP_HOST"]
@@ -484,6 +489,62 @@ def send_email(alerts: list[Alert]) -> bool:
 
     print(f"[email] Sent to {email_to}.")
     return True
+
+
+def create_github_issue(alerts: list[Alert]) -> bool:
+    """
+    Create a GitHub issue in the current repository when running in Actions.
+    Requires `GITHUB_REPOSITORY` (owner/repo) and `GITHUB_TOKEN` environment variables.
+    """
+    repo = os.getenv("GITHUB_REPOSITORY")
+    token = os.getenv("GITHUB_TOKEN")
+
+    if not repo or not token:
+        return False
+
+    title = f"[Udacity] {len(alerts)} Nanodegree(s) with low prices"
+    body_lines = ["Low prices found for Udacity Nanodegrees.", ""]
+
+    for alert in alerts:
+        snapshot = alert.snapshot
+        body_lines.extend(
+            [
+                f"Course: {snapshot.name}",
+                f"Current Price: {snapshot.currency} {snapshot.price:.2f}",
+                f"Historical Median: {snapshot.currency} {alert.historical_median:.2f}",
+                f"Historical Mean: {snapshot.currency} {alert.historical_mean:.2f}",
+                f"Historical Minimum: {snapshot.currency} {alert.historical_min:.2f}",
+                f"History Points: {alert.historical_count}",
+                f"Alert Reason: {alert.reason}",
+                f"URL: {snapshot.url}",
+                "",
+                "---",
+                "",
+            ]
+        )
+
+    body = "\n".join(body_lines)
+
+    url = f"https://api.github.com/repos/{repo}/issues"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    payload = {"title": title, "body": body}
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        if resp.status_code in (200, 201):
+            issue_url = resp.json().get("html_url")
+            print(f"[github] Created issue: {issue_url}")
+            return True
+        else:
+            print(
+                f"[github] Failed to create issue: {resp.status_code} {resp.text}")
+            return False
+    except Exception as exc:
+        print(f"[github] Exception while creating issue: {exc}")
+        return False
 
 
 def email_configured() -> bool:
