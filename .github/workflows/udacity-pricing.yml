@@ -46,7 +46,7 @@ jobs:
           MIN_VALID_PRICE: "50"
           ALERT_COOLDOWN_DAYS: "7"
         run: |
-          python src/udacity-pricing.py
+          python src/udacity_pricing.py
 
       - name: Commit updated pricing history
         run: |
