@@ -6,12 +6,14 @@ First, thank you for being interested in contributing to Brito Alerts! This docu
 
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
+
    ```bash
    git clone https://github.com/YOUR_USERNAME/brito-alerts.git
    cd brito-alerts
    ```
 
 3. **Set up development environment**:
+
    ```bash
    python -m venv .venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
@@ -20,6 +22,7 @@ First, thank you for being interested in contributing to Brito Alerts! This docu
    ```
 
 4. **Create a branch** for your changes:
+
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -27,24 +30,29 @@ First, thank you for being interested in contributing to Brito Alerts! This docu
 ## Development Workflow
 
 ### Running Tests
+
 ```bash
 pytest
 pytest --cov=src  # With coverage report
 ```
 
 ### Code Style
+
 We follow PEP 8 style guidelines. Format your code with:
+
 ```bash
 black src/
 ruff check src/ --fix
 ```
 
 ### Type Checking
+
 ```bash
 mypy src/
 ```
 
 ### Pre-commit Hooks
+
 ```bash
 pre-commit install
 pre-commit run --all-files
@@ -56,6 +64,7 @@ pre-commit run --all-files
 2. **Write tests** for new functionality
 3. **Update documentation** if needed
 4. **Push to your fork**:
+
    ```bash
    git push origin feature/your-feature-name
    ```
