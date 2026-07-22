@@ -345,7 +345,7 @@ def choose_relevant_price(candidates: list[PriceCandidate]) -> PriceSelection:
         raise ValueError("No price candidates found on the page.")
 
     discount_keywords = re.compile(
-        r"\b(discount|save|off|promo|promotion|sale|deal|now|today|was|before|de|por)\b",
+        r"\b(discount|save|off|promo|promotion|sale|deal|now|today|was|before|por)\b",
         flags=re.IGNORECASE,
     )
     original_keywords = re.compile(
