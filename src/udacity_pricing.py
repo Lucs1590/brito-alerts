@@ -464,6 +464,19 @@ def ensure_csv(path: Path, fieldnames: list[str]) -> None:
         with path.open("w", newline="", encoding="utf-8") as file:
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             writer.writeheader()
+        return
+
+    with path.open("r", newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        if reader.fieldnames == fieldnames:
+            return
+        rows = list(reader)
+
+    with path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
 
 
 def build_alert(snapshot: PriceSnapshot, history: list[float]) -> Alert | None:
