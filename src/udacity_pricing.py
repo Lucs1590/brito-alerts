@@ -349,7 +349,7 @@ def choose_relevant_price(candidates: list[PriceCandidate]) -> PriceSelection:
         flags=re.IGNORECASE,
     )
     original_keywords = re.compile(
-        r"\b(original|list|regular|before|was|old|de)\b",
+        r"\b(original|list|regular|before|was|old)\b",
         flags=re.IGNORECASE,
     )
 
