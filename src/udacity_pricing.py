@@ -173,7 +173,6 @@ def get_page_text(url: str) -> tuple[str, str]:
     selectors = [
         "[data-testid*='price']",
         "[class*='price']",
-        "[class*='discount']",
         "[id*='price']",
     ]
 
