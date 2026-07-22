@@ -60,6 +60,78 @@ class TestUdacityPricing:
         assert candidate.raw == "$100.00"
         assert candidate.context == "test"
 
+    def test_choose_relevant_price_without_discount(self):
+        """Keeps stable behavior when only one visible price exists."""
+        import udacity_pricing
+
+        candidates = [
+            udacity_pricing.PriceCandidate(
+                currency="USD",
+                amount=399.0,
+                raw="$399.00",
+                context="Enroll now and start learning.",
+            )
+        ]
+
+        selected = udacity_pricing.choose_relevant_price(candidates)
+
+        assert selected.current.amount == 399.0
+        assert selected.original is None
+        assert selected.discount_amount is None
+        assert selected.discount_percent is None
+
+    def test_choose_relevant_price_with_discount_visible(self):
+        """Prioritizes promotional price and computes discount metadata."""
+        import udacity_pricing
+
+        candidates = [
+            udacity_pricing.PriceCandidate(
+                currency="USD",
+                amount=249.0,
+                raw="$249.00",
+                context="Limited time discount price.",
+            ),
+            udacity_pricing.PriceCandidate(
+                currency="USD",
+                amount=399.0,
+                raw="$399.00",
+                context="Original list price before discount.",
+            ),
+        ]
+
+        selected = udacity_pricing.choose_relevant_price(candidates)
+
+        assert selected.current.amount == 249.0
+        assert selected.original is not None
+        assert selected.original.amount == 399.0
+        assert selected.discount_amount == pytest.approx(150.0, abs=0.01)
+        assert selected.discount_percent == pytest.approx((150.0 / 399.0) * 100, abs=0.01)
+
+    def test_choose_relevant_price_partial_structure(self):
+        """Handles partial page structures with multiple prices safely."""
+        import udacity_pricing
+
+        candidates = [
+            udacity_pricing.PriceCandidate(
+                currency="USD",
+                amount=329.0,
+                raw="$329.00",
+                context="now only today special offer",
+            ),
+            udacity_pricing.PriceCandidate(
+                currency="USD",
+                amount=499.0,
+                raw="$499.00",
+                context="some unrelated text",
+            ),
+        ]
+
+        selected = udacity_pricing.choose_relevant_price(candidates)
+
+        assert selected.current.amount == 329.0
+        assert selected.original is not None
+        assert selected.original.amount == 499.0
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

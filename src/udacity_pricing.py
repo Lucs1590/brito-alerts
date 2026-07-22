@@ -57,6 +57,9 @@ class PriceSnapshot:
     url: str
     currency: str
     price: float
+    original_price: float | None
+    discount_amount: float | None
+    discount_percent: float | None
     raw: str
     context: str
 
@@ -69,6 +72,15 @@ class Alert:
     historical_min: float
     historical_count: int
     reason: str
+
+
+@dataclass
+class PriceSelection:
+    current: PriceCandidate
+    original: PriceCandidate | None
+    discount_amount: float | None
+    discount_percent: float | None
+    source: str
 
 
 def main() -> int:
@@ -127,35 +139,57 @@ def main() -> int:
 
 
 def get_price(site: dict) -> PriceSnapshot:
-    text = get_page_text(site["url"])
+    text, telemetry = get_page_text(site["url"])
     candidates = extract_prices(text)
     selected = choose_relevant_price(candidates)
+
+    print(
+        f"[telemetry] {site['name']}: source={selected.source}; "
+        f"candidates={len(candidates)}; details={telemetry}"
+    )
 
     return PriceSnapshot(
         timestamp_utc=now_utc().isoformat(timespec="seconds"),
         name=site["name"],
         url=site["url"],
-        currency=selected.currency,
-        price=round(selected.amount, 2),
-        raw=selected.raw,
-        context=selected.context,
+        currency=selected.current.currency,
+        price=round(selected.current.amount, 2),
+        original_price=round(selected.original.amount, 2) if selected.original else None,
+        discount_amount=round(selected.discount_amount, 2) if selected.discount_amount is not None else None,
+        discount_percent=round(selected.discount_percent, 2) if selected.discount_percent is not None else None,
+        raw=selected.current.raw,
+        context=selected.current.context,
     )
 
 
-def get_page_text(url: str) -> str:
+def get_page_text(url: str) -> tuple[str, str]:
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8,pt;q=0.7",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Upgrade-Insecure-Requests": "1",
+    }
+    selectors = [
+        "[data-testid*='price']",
+        "[class*='price']",
+        "[class*='discount']",
+        "[id*='price']",
+    ]
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-
-        page = browser.new_page(
+        context = browser.new_context(
             user_agent=USER_AGENT,
             viewport={"width": 1440, "height": 1200},
             locale="en-US",
+            extra_http_headers=headers,
         )
+        page = context.new_page()
 
         try:
-            page.goto(url, wait_until="networkidle", timeout=60_000)
-
-            page.wait_for_timeout(2_000)
+            page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            page.wait_for_load_state("networkidle", timeout=30_000)
 
             for label in ["Accept", "Accept All", "I agree", "Agree", "Got it"]:
                 try:
@@ -167,12 +201,31 @@ def get_page_text(url: str) -> str:
                 except Exception:
                     pass
 
+            page.wait_for_function(
+                "document?.body?.innerText && /(?:R\\$|BRL|US\\$|USD|\\$)\\s*\\d/.test(document.body.innerText)",
+                timeout=15_000,
+            )
+
+            snippets: list[str] = []
+            matched_selectors: list[str] = []
+            for selector in selectors:
+                try:
+                    texts = page.locator(selector).all_inner_texts()
+                except Exception:
+                    continue
+                priced_texts = [text for text in texts if re.search(r"(R\$|BRL|US\$|USD|\$)\s*\d", text)]
+                if priced_texts:
+                    matched_selectors.append(selector)
+                    snippets.extend(priced_texts[:4])
+
             text = page.locator("body").inner_text(timeout=15_000)
-            return text
+            combined = "\n".join(snippets + [text]) if snippets else text
+            return combined, ",".join(matched_selectors) if matched_selectors else "body"
 
         except PlaywrightTimeoutError as exc:
             raise RuntimeError(f"Timeout ao abrir a página: {url}") from exc
         finally:
+            context.close()
             browser.close()
 
 
@@ -281,7 +334,7 @@ def deduplicate_prices(candidates: Iterable[PriceCandidate]) -> list[PriceCandid
     return unique
 
 
-def choose_relevant_price(candidates: list[PriceCandidate]) -> PriceCandidate:
+def choose_relevant_price(candidates: list[PriceCandidate]) -> PriceSelection:
     """
     Given a list of price candidates, choose the most relevant one.
     The heuristic is to select the lowest price,
@@ -291,7 +344,51 @@ def choose_relevant_price(candidates: list[PriceCandidate]) -> PriceCandidate:
     if not candidates:
         raise ValueError("No price candidates found on the page.")
 
-    return min(candidates, key=lambda item: item.amount)
+    discount_keywords = re.compile(
+        r"\b(discount|save|off|promo|promotion|sale|deal|now|today|was|before|de|por)\b",
+        flags=re.IGNORECASE,
+    )
+    original_keywords = re.compile(
+        r"\b(original|list|regular|before|was|old|de)\b",
+        flags=re.IGNORECASE,
+    )
+
+    current = min(candidates, key=lambda item: item.amount)
+    original_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.amount > current.amount and original_keywords.search(candidate.context)
+    ]
+    fallback_original_candidates = [candidate for candidate in candidates if candidate.amount > current.amount]
+    original = max(original_candidates, key=lambda item: item.amount) if original_candidates else None
+    source = "lowest_price"
+
+    if original is None and fallback_original_candidates:
+        hinted_current = [item for item in candidates if discount_keywords.search(item.context)]
+        if hinted_current:
+            current = min(hinted_current, key=lambda item: item.amount)
+            fallback_original_candidates = [
+                candidate for candidate in candidates if candidate.amount > current.amount
+            ]
+            if fallback_original_candidates:
+                original = max(fallback_original_candidates, key=lambda item: item.amount)
+                source = "discount_context"
+
+    discount_amount = None
+    discount_percent = None
+    if original is not None and original.amount > current.amount:
+        discount_amount = original.amount - current.amount
+        discount_percent = (discount_amount / original.amount) * 100
+        if source == "lowest_price":
+            source = "current_and_original"
+
+    return PriceSelection(
+        current=current,
+        original=original,
+        discount_amount=discount_amount,
+        discount_percent=discount_percent,
+        source=source,
+    )
 
 
 def load_history(url: str, currency: str) -> list[float]:
@@ -334,6 +431,9 @@ def append_snapshot(snapshot: PriceSnapshot) -> None:
         "url",
         "currency",
         "price",
+        "original_price",
+        "discount_amount",
+        "discount_percent",
         "raw",
         "context",
     ]
@@ -349,6 +449,9 @@ def append_snapshot(snapshot: PriceSnapshot) -> None:
                 "url": snapshot.url,
                 "currency": snapshot.currency,
                 "price": f"{snapshot.price:.2f}",
+                "original_price": f"{snapshot.original_price:.2f}" if snapshot.original_price is not None else "",
+                "discount_amount": f"{snapshot.discount_amount:.2f}" if snapshot.discount_amount is not None else "",
+                "discount_percent": f"{snapshot.discount_percent:.2f}" if snapshot.discount_percent is not None else "",
                 "raw": snapshot.raw,
                 "context": snapshot.context,
             }
@@ -512,6 +615,12 @@ def create_github_issue(alerts: list[Alert]) -> bool:
             [
                 f"Course: {snapshot.name}",
                 f"Current Price: {snapshot.currency} {snapshot.price:.2f}",
+                f"Original Price: {snapshot.currency} {snapshot.original_price:.2f}"
+                if snapshot.original_price is not None
+                else "Original Price: n/a",
+                f"Discount: {snapshot.currency} {snapshot.discount_amount:.2f} ({snapshot.discount_percent:.2f}%)"
+                if snapshot.discount_amount is not None and snapshot.discount_percent is not None
+                else "Discount: n/a",
                 f"Historical Median: {snapshot.currency} {alert.historical_median:.2f}",
                 f"Historical Mean: {snapshot.currency} {alert.historical_mean:.2f}",
                 f"Historical Minimum: {snapshot.currency} {alert.historical_min:.2f}",
@@ -580,6 +689,12 @@ def build_email_body(alerts: list[Alert]) -> str:
             [
                 f"Course: {snapshot.name}",
                 f"Current Price: {snapshot.currency} {snapshot.price:.2f}",
+                f"Original Price: {snapshot.currency} {snapshot.original_price:.2f}"
+                if snapshot.original_price is not None
+                else "Original Price: n/a",
+                f"Discount: {snapshot.currency} {snapshot.discount_amount:.2f} ({snapshot.discount_percent:.2f}%)"
+                if snapshot.discount_amount is not None and snapshot.discount_percent is not None
+                else "Discount: n/a",
                 f"Historical Median: {snapshot.currency} {alert.historical_median:.2f}",
                 f"Historical Mean: {snapshot.currency} {alert.historical_mean:.2f}",
                 f"Historical Minimum: {snapshot.currency} {alert.historical_min:.2f}",
